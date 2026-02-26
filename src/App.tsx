@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useNavigate, Navigate, useParams } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link, useNavigate, Navigate, useParams, useLocation } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
 import { 
   Search, 
@@ -28,7 +28,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { supabase } from './lib/supabase';
+import { supabase } from './supabaseClient';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -490,16 +490,28 @@ const LandingPage = ({ user }: { user: UserData | null }) => {
 };
 
 const LoginPage = ({ onLogin }: { onLogin: (user: UserData) => void }) => {
-  const [email, setEmail] = useState('');
+  const location = useLocation();
+  const [email, setEmail] = useState(location.state?.email || '');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState(location.state?.signupSuccess ? 'Your account has been created. Please check your email and verify your address before logging in.' : '');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (location.state?.email) {
+      setEmail(location.state.email);
+    }
+    if (location.state?.signupSuccess) {
+      setSuccessMessage('Your account has been created. Please check your email and verify your address before logging in.');
+    }
+  }, [location.state]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setSuccessMessage('');
     console.log('Login attempt', { email });
 
     // Demo Bypass
@@ -530,7 +542,7 @@ const LoginPage = ({ onLogin }: { onLogin: (user: UserData) => void }) => {
 
       if (authError) throw authError;
 
-      if (data.user) {
+      if (data.user && data.session) {
         console.log('Login successful', data.user);
         // Map Supabase user to our UserData
         const userData: UserData = {
@@ -542,6 +554,8 @@ const LoginPage = ({ onLogin }: { onLogin: (user: UserData) => void }) => {
         };
         onLogin(userData);
         navigate('/');
+      } else if (data.user && !data.session) {
+        setError('Please confirm your email before logging in.');
       }
     } catch (err: any) {
       console.error('Login error:', err);
@@ -564,6 +578,7 @@ const LoginPage = ({ onLogin }: { onLogin: (user: UserData) => void }) => {
         </div>
         
         {error && <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm mb-4">{error}</div>}
+        {successMessage && <div className="bg-emerald-50 text-emerald-600 p-3 rounded-lg text-sm mb-4">{successMessage}</div>}
         
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -664,15 +679,8 @@ const RegisterPage = ({ onLogin }: { onLogin: (user: UserData) => void }) => {
 
       if (data.user) {
         console.log('Registration successful', data.user);
-        const userData: UserData = {
-          id: data.user.id,
-          name: name,
-          email: email,
-          role: role,
-          status: 'approved'
-        };
-        onLogin(userData);
-        navigate('/');
+        // Redirect to login with email and success flag
+        navigate('/login', { state: { email, signupSuccess: true } });
       }
     } catch (err: any) {
       console.error('Register error:', err);
@@ -1036,7 +1044,7 @@ const AdminDashboard = ({ user }: { user: UserData }) => {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-zinc-500">
-                      {new Date(sub.current_period_end).toLocaleDateString()}
+                      {sub.current_period_end ? new Date(sub.current_period_end).toLocaleDateString() : 'N/A'}
                     </td>
                   </tr>
                 ))}
@@ -1240,9 +1248,9 @@ const EmployerDashboard = ({ user }: { user: UserData }) => {
           <div className="bg-indigo-600 p-6 rounded-2xl text-white shadow-xl shadow-indigo-100">
             <h3 className="text-lg font-bold mb-2">Current Plan: {subscription?.plan_name || 'Free'}</h3>
             <p className="text-indigo-100 text-sm mb-6">
-              {subscription?.plan_name === 'Free' 
+              {!subscription || subscription.plan_name === 'Free' 
                 ? 'Upgrade to post more jobs and contact more VAs.' 
-                : `Your plan expires on ${new Date(subscription.current_period_end).toLocaleDateString()}`}
+                : `Your plan expires on ${subscription.current_period_end ? new Date(subscription.current_period_end).toLocaleDateString() : 'N/A'}`}
             </p>
             <Link to="/pricing" className="block w-full text-center bg-white text-indigo-600 py-2 rounded-lg font-bold hover:bg-indigo-50 transition-all">
               {subscription?.plan_name === 'Free' ? 'Upgrade Plan' : 'Manage Subscription'}
