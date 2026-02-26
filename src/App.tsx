@@ -67,21 +67,21 @@ const ApplyModal = ({ job, user, onClose }: { job: any, user: UserData | null, o
 
     setSubmitting(true);
     try {
-      const res = await fetch('/api/applications', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const { error } = await supabase
+        .from('applications')
+        .insert({
           job_id: job.id,
           va_id: user.id,
           cover_letter: coverLetter
-        })
-      });
-      if (res.ok) {
-        setSuccess(true);
-        setTimeout(onClose, 2000);
-      }
+        });
+
+      if (error) throw error;
+
+      setSuccess(true);
+      setTimeout(onClose, 2000);
     } catch (err) {
-      console.error(err);
+      console.error('Error submitting application:', err);
+      alert('Failed to submit application');
     } finally {
       setSubmitting(false);
     }
@@ -156,12 +156,26 @@ const JobDetailsPage = ({ user }: { user: UserData | null }) => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    fetch(`/api/jobs/${id}`)
-      .then(res => res.json())
-      .then(data => {
+    const fetchJob = async () => {
+      if (!id) return;
+      setLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from('jobs')
+          .select('*')
+          .eq('id', id)
+          .single();
+
+        if (error) throw error;
         setJob(data);
+      } catch (err) {
+        console.error('Error fetching job details:', err);
+      } finally {
         setLoading(false);
-      });
+      }
+    };
+
+    fetchJob();
   }, [id]);
 
   if (loading) return (
@@ -513,26 +527,6 @@ const LoginPage = ({ onLogin }: { onLogin: (user: UserData) => void }) => {
     setError('');
     setSuccessMessage('');
     console.log('Login attempt', { email });
-
-    // Demo Bypass
-    if (email === 'admin@vahub.com' && password === 'Memyselfandi!1') {
-      onLogin({ id: 'admin-1', name: 'System Admin', email: 'admin@vahub.com', role: 'admin', status: 'approved' });
-      navigate('/');
-      setLoading(false);
-      return;
-    }
-    if (email === 'va@demo.com' && password === 'vademo') {
-      onLogin({ id: 'va-demo-1', name: 'Demo VA', email: 'va@demo.com', role: 'va', status: 'approved' });
-      navigate('/');
-      setLoading(false);
-      return;
-    }
-    if (email === 'emp@demo.com' && password === 'empdemo') {
-      onLogin({ id: 'employer-demo-1', name: 'Demo Employer', email: 'emp@demo.com', role: 'employer', status: 'approved' });
-      navigate('/');
-      setLoading(false);
-      return;
-    }
     
     try {
       const { data, error: authError } = await supabase.auth.signInWithPassword({
@@ -544,13 +538,21 @@ const LoginPage = ({ onLogin }: { onLogin: (user: UserData) => void }) => {
 
       if (data.user && data.session) {
         console.log('Login successful', data.user);
+        
+        // Fetch profile to get the latest role and status
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', data.user.id)
+          .single();
+
         // Map Supabase user to our UserData
         const userData: UserData = {
           id: data.user.id,
-          name: data.user.user_metadata?.full_name || data.user.email?.split('@')[0] || 'User',
+          name: profile?.full_name || data.user.user_metadata?.full_name || data.user.email?.split('@')[0] || 'User',
           email: data.user.email || '',
-          role: (data.user.user_metadata?.role as UserRole) || 'va',
-          status: 'approved'
+          role: (profile?.role as UserRole) || (data.user.user_metadata?.role as UserRole) || 'va',
+          status: profile?.status || 'approved'
         };
         onLogin(userData);
         navigate('/');
@@ -609,35 +611,6 @@ const LoginPage = ({ onLogin }: { onLogin: (user: UserData) => void }) => {
           >
             {loading ? 'Logging in...' : 'Log In'}
           </button>
-
-          <div className="relative my-6">
-            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-zinc-200"></div></div>
-            <div className="relative flex justify-center text-xs uppercase"><span className="bg-white px-2 text-zinc-400 font-bold">Or use demo</span></div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-2">
-            <button 
-              type="button" 
-              onClick={() => { setEmail('admin@vahub.com'); setPassword('Memyselfandi!1'); }}
-              className="w-full bg-zinc-50 text-zinc-900 py-2 rounded-lg font-bold hover:bg-zinc-100 transition-all border border-zinc-200 text-xs"
-            >
-              Admin Demo
-            </button>
-            <button 
-              type="button" 
-              onClick={() => { setEmail('va@demo.com'); setPassword('vademo'); }}
-              className="w-full bg-zinc-50 text-zinc-900 py-2 rounded-lg font-bold hover:bg-zinc-100 transition-all border border-zinc-200 text-xs"
-            >
-              Worker Demo
-            </button>
-            <button 
-              type="button" 
-              onClick={() => { setEmail('emp@demo.com'); setPassword('empdemo'); }}
-              className="w-full bg-zinc-50 text-zinc-900 py-2 rounded-lg font-bold hover:bg-zinc-100 transition-all border border-zinc-200 text-xs"
-            >
-              Employer Demo
-            </button>
-          </div>
         </form>
         
         <div className="mt-6 text-center text-sm text-zinc-500">
@@ -792,12 +765,59 @@ const AdminDashboard = ({ user }: { user: UserData }) => {
   const [rejectingJobId, setRejectingJobId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
 
-  const fetchData = useCallback(() => {
-    fetch('/api/admin/stats').then(res => res.json()).then(setStats);
-    fetch('/api/admin/pending-jobs').then(res => res.json()).then(setPendingJobs);
-    fetch(`/api/admin/users?search=${userSearch}`).then(res => res.json()).then(setUsers);
-    fetch('/api/admin/logs').then(res => res.json()).then(setLogs);
-    fetch('/api/admin/subscriptions').then(res => res.json()).then(setSubscriptions);
+  const fetchData = useCallback(async () => {
+    try {
+      // 1. Stats
+      const [vaCount, empCount, jobCount, pendingCount] = await Promise.all([
+        supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'va'),
+        supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'employer'),
+        supabase.from('jobs').select('*', { count: 'exact', head: true }),
+        supabase.from('jobs').select('*', { count: 'exact', head: true }).eq('status', 'pending')
+      ]);
+
+      setStats({
+        totalVAs: { count: vaCount.count || 0 },
+        totalEmployers: { count: empCount.count || 0 },
+        totalJobs: { count: jobCount.count || 0 },
+        pendingJobs: { count: pendingCount.count || 0 }
+      });
+
+      // 2. Pending Jobs
+      const { data: pJobs } = await supabase
+        .from('jobs')
+        .select('*')
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false });
+      setPendingJobs(pJobs || []);
+
+      // 3. Users
+      let userQuery = supabase.from('profiles').select('*');
+      if (userSearch) {
+        userQuery = userQuery.ilike('full_name', `%${userSearch}%`);
+      }
+      const { data: uList } = await userQuery.order('created_at', { ascending: false });
+      setUsers(uList || []);
+
+      // 4. Subscriptions (from employer_profiles)
+      const { data: subList } = await supabase
+        .from('employer_profiles')
+        .select(`
+          *,
+          profiles:id(full_name, email)
+        `)
+        .order('created_at', { ascending: false });
+      
+      setSubscriptions((subList || []).map(s => ({
+        ...s,
+        employer_name: s.profiles?.full_name,
+        employer_email: s.profiles?.email
+      })));
+
+      // 5. Logs (Placeholder for now as we don't have a logs table yet)
+      setLogs([]);
+    } catch (err) {
+      console.error('Error fetching admin data:', err);
+    }
   }, [userSearch]);
 
   useEffect(() => {
@@ -805,43 +825,63 @@ const AdminDashboard = ({ user }: { user: UserData }) => {
   }, [fetchData]);
 
   const approveJob = async (id: string) => {
-    await fetch('/api/admin/approve-job', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, admin_id: user.id })
-    });
-    fetchData();
+    try {
+      const { error } = await supabase
+        .from('jobs')
+        .update({ status: 'approved' })
+        .eq('id', id);
+
+      if (error) throw error;
+      fetchData();
+    } catch (err) {
+      console.error('Error approving job:', err);
+    }
   };
 
   const rejectJob = async () => {
     if (!rejectingJobId) return;
-    await fetch('/api/admin/reject-job', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: rejectingJobId, reason: rejectionReason, admin_id: user.id })
-    });
-    setRejectingJobId(null);
-    setRejectionReason('');
-    fetchData();
+    try {
+      const { error } = await supabase
+        .from('jobs')
+        .update({ status: 'rejected' })
+        .eq('id', rejectingJobId);
+
+      if (error) throw error;
+      setRejectingJobId(null);
+      setRejectionReason('');
+      fetchData();
+    } catch (err) {
+      console.error('Error rejecting job:', err);
+    }
   };
 
   const updateUserStatus = async (id: string, status: string) => {
-    await fetch('/api/admin/update-user-status', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, status, admin_id: user.id })
-    });
-    fetchData();
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ status })
+        .eq('id', id);
+
+      if (error) throw error;
+      fetchData();
+    } catch (err) {
+      console.error('Error updating user status:', err);
+    }
   };
 
   const deleteUser = async (id: string) => {
     if (!confirm('Are you sure you want to delete this user?')) return;
-    await fetch('/api/admin/delete-user', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, admin_id: user.id })
-    });
-    fetchData();
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      fetchData();
+    } catch (err) {
+      console.error('Error deleting user:', err);
+    }
   };
 
   return (
@@ -1125,14 +1165,36 @@ const EmployerDashboard = ({ user }: { user: UserData }) => {
 
   const fetchData = useCallback(async () => {
     try {
-      const [appsRes, subRes] = await Promise.all([
-        fetch(`/api/employer/applications?employer_id=${user.id}`),
-        fetch(`/api/subscriptions?employer_id=${user.id}`)
-      ]);
-      setApplications(await appsRes.json());
-      setSubscription(await subRes.json());
+      setLoading(true);
+      // Fetch applications for jobs owned by this employer
+      const { data: apps, error: appsError } = await supabase
+        .from('applications')
+        .select(`
+          *,
+          jobs!inner(title, employer_id),
+          profiles:va_id(full_name)
+        `)
+        .eq('jobs.employer_id', user.id);
+
+      if (appsError) throw appsError;
+
+      // Fetch subscription from employer_profiles
+      const { data: employerProfile, error: subError } = await supabase
+        .from('employer_profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+
+      if (subError && subError.code !== 'PGRST116') throw subError;
+
+      setApplications((apps || []).map(a => ({
+        ...a,
+        job_title: a.jobs?.title,
+        va_name: a.profiles?.full_name || 'VA User'
+      })));
+      setSubscription(employerProfile);
     } catch (err) {
-      console.error(err);
+      console.error('Error fetching employer data:', err);
     } finally {
       setLoading(false);
     }
@@ -1144,42 +1206,57 @@ const EmployerDashboard = ({ user }: { user: UserData }) => {
 
   const handlePostJob = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch('/api/jobs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        employer_id: user.id,
-        title,
-        description,
-        salary_min: Number(salaryMin),
-        salary_max: Number(salaryMax),
-        job_type: 'Full-time',
-        experience_level: 'Intermediate'
-      })
-    });
-    if (res.ok) {
+    try {
+      const { error } = await supabase
+        .from('jobs')
+        .insert({
+          employer_id: user.id,
+          title,
+          company_name: user.name, // Using user's name as company name for now
+          description,
+          salary_min: Number(salaryMin),
+          salary_max: Number(salaryMax),
+          job_type: 'Full-time',
+          status: 'pending'
+        });
+
+      if (error) throw error;
+
       setShowPostModal(false);
       alert('Job posted! Awaiting admin approval.');
       fetchData();
+    } catch (err) {
+      console.error('Error posting job:', err);
+      alert('Failed to post job');
     }
   };
 
   const handleHire = async (appId: string) => {
-    await fetch('/api/hire', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ application_id: appId, employer_id: user.id })
-    });
-    fetchData();
+    try {
+      const { error } = await supabase
+        .from('applications')
+        .update({ status: 'hired' })
+        .eq('id', appId);
+
+      if (error) throw error;
+      fetchData();
+    } catch (err) {
+      console.error('Error hiring:', err);
+    }
   };
 
   const handleUnhire = async (appId: string) => {
-    await fetch('/api/unhire', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ application_id: appId })
-    });
-    fetchData();
+    try {
+      const { error } = await supabase
+        .from('applications')
+        .update({ status: 'pending' })
+        .eq('id', appId);
+
+      if (error) throw error;
+      fetchData();
+    } catch (err) {
+      console.error('Error unhiring:', err);
+    }
   };
 
   return (
@@ -1356,14 +1433,28 @@ const VADashboard = ({ user }: { user: UserData }) => {
 
   const fetchData = useCallback(async () => {
     try {
+      setLoading(true);
       const [jobsRes, profileRes] = await Promise.all([
-        fetch('/api/jobs'),
-        fetch(`/api/va/profile/${user.id}`)
+        supabase
+          .from('jobs')
+          .select('*')
+          .eq('status', 'approved')
+          .order('created_at', { ascending: false })
+          .limit(5),
+        supabase
+          .from('va_profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single()
       ]);
-      setJobs(await jobsRes.json());
-      setProfile(await profileRes.json());
+
+      if (jobsRes.error) throw jobsRes.error;
+      if (profileRes.error && profileRes.error.code !== 'PGRST116') throw profileRes.error;
+
+      setJobs(jobsRes.data || []);
+      setProfile(profileRes.data);
     } catch (err) {
-      console.error(err);
+      console.error('Error fetching VA data:', err);
     } finally {
       setLoading(false);
     }
@@ -1499,23 +1590,24 @@ const VAProfileEdit = ({ user, initialProfile, onSave }: { user: UserData, initi
     e.preventDefault();
     setSaving(true);
     try {
-      await fetch('/api/va/profile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: user.id,
-          headline,
+      const { error } = await supabase
+        .from('va_profiles')
+        .upsert({
+          id: user.id,
+          title: headline,
           bio,
           hourly_rate: Number(hourlyRate),
-          monthly_salary: Number(monthlySalary),
           availability,
-          skills
-        })
-      });
+          skills: skills.map(s => `${s.skill_name} (${s.years_experience})`) // Simplified for now
+        });
+
+      if (error) throw error;
+
       onSave();
       alert('Profile updated successfully!');
     } catch (err) {
-      console.error(err);
+      console.error('Error updating profile:', err);
+      alert('Failed to update profile');
     } finally {
       setSaving(false);
     }
@@ -1658,14 +1750,45 @@ const MessagesPage = ({ user }: { user: UserData }) => {
   }, [chatId]);
 
   const fetchMessages = useCallback(async () => {
-    const res = await fetch(`/api/messages/${user.id}`);
-    setMessages(await res.json());
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select(`
+          *,
+          sender:sender_id(full_name),
+          receiver:receiver_id(full_name)
+        `)
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+
+      const formattedMessages = (data || []).map(m => ({
+        ...m,
+        sender_name: m.sender?.full_name || 'User',
+        receiver_name: m.receiver?.full_name || 'User',
+        message_body: m.content
+      }));
+
+      setMessages(formattedMessages);
+    } catch (err) {
+      console.error('Error fetching messages:', err);
+    }
   }, [user.id]);
 
   useEffect(() => {
     fetchMessages();
-    const interval = setInterval(fetchMessages, 5000);
-    return () => clearInterval(interval);
+    // Use Supabase Realtime for messages
+    const channel = supabase
+      .channel('messages')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => {
+        fetchMessages();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [fetchMessages]);
 
   const chats = Array.from(new Set(messages.map(m => m.sender_id === user.id ? m.receiver_id : m.sender_id)));
@@ -1674,17 +1797,21 @@ const MessagesPage = ({ user }: { user: UserData }) => {
     e.preventDefault();
     if (!activeChat || !newMessage) return;
     
-    await fetch('/api/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sender_id: user.id,
-        receiver_id: activeChat,
-        message_body: newMessage
-      })
-    });
-    setNewMessage('');
-    fetchMessages();
+    try {
+      const { error } = await supabase
+        .from('messages')
+        .insert({
+          sender_id: user.id,
+          receiver_id: activeChat,
+          content: newMessage
+        });
+
+      if (error) throw error;
+      setNewMessage('');
+      fetchMessages();
+    } catch (err) {
+      console.error('Error sending message:', err);
+    }
   };
 
   const activeMessages = messages.filter(m => 
@@ -1778,20 +1905,21 @@ const PricingPage = ({ user }: { user?: UserData }) => {
     
     setUpgrading(true);
     try {
-      const res = await fetch('/api/subscriptions/upgrade', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          employer_id: user.id,
-          plan_id: planName === 'PRO' ? 'pro-plan' : 'premium-plan'
-        })
-      });
-      if (res.ok) {
-        alert('Subscription upgraded successfully!');
-        window.location.href = '/employer';
-      }
+      const { error } = await supabase
+        .from('employer_profiles')
+        .upsert({
+          id: user.id,
+          subscription_plan: planName.toLowerCase(),
+          current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30 days from now
+        });
+
+      if (error) throw error;
+
+      alert('Subscription upgraded successfully!');
+      window.location.href = '/employer';
     } catch (err) {
-      console.error(err);
+      console.error('Error upgrading subscription:', err);
+      alert('Upgrade failed');
     } finally {
       setUpgrading(false);
     }
@@ -2010,13 +2138,37 @@ const TalentSearchPage = () => {
   const [idProofMin, setIdProofMin] = useState(40);
 
   useEffect(() => {
-    fetch('/api/talents')
-      .then(res => res.json())
-      .then(data => {
-        setTalents(data);
-        setLoading(false);
-      });
+    fetchTalents();
   }, []);
+
+  const fetchTalents = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('va_profiles')
+        .select(`
+          *,
+          profiles (
+            full_name
+          )
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      
+      // Map the data to match the expected format
+      const formattedTalents = (data || []).map(t => ({
+        ...t,
+        name: t.profiles?.full_name || 'VA User'
+      }));
+      
+      setTalents(formattedTalents);
+    } catch (err) {
+      console.error('Error fetching talents:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const filteredTalents = talents.filter(t => {
     const matchesSearch = t.name.toLowerCase().includes(search.toLowerCase()) || 
@@ -2275,13 +2427,26 @@ const JobsPage = ({ user }: { user: UserData | null }) => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    fetch('/api/jobs')
-      .then(res => res.json())
-      .then(data => {
-        setJobs(data);
-        setLoading(false);
-      });
+    fetchJobs();
   }, []);
+
+  const fetchJobs = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('jobs')
+        .select('*')
+        .eq('status', 'approved')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setJobs(data || []);
+    } catch (err) {
+      console.error('Error fetching jobs:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const allSkills = Array.from(new Set(jobs.flatMap(j => (j.skills || []) as string[]))).sort() as string[];
 
@@ -2488,14 +2653,21 @@ export default function App() {
 
   useEffect(() => {
     // Check active session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session?.user) {
+        // Fetch profile to get role and status
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+
         const userData: UserData = {
           id: session.user.id,
-          name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User',
+          name: profile?.full_name || session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User',
           email: session.user.email || '',
-          role: (session.user.user_metadata?.role as UserRole) || 'va',
-          status: 'approved'
+          role: (profile?.role as UserRole) || (session.user.user_metadata?.role as UserRole) || 'va',
+          status: profile?.status || 'approved'
         };
         setUser(userData);
       }
@@ -2503,14 +2675,20 @@ export default function App() {
     });
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (session?.user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+
         const userData: UserData = {
           id: session.user.id,
-          name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User',
+          name: profile?.full_name || session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User',
           email: session.user.email || '',
-          role: (session.user.user_metadata?.role as UserRole) || 'va',
-          status: 'approved'
+          role: (profile?.role as UserRole) || (session.user.user_metadata?.role as UserRole) || 'va',
+          status: profile?.status || 'approved'
         };
         setUser(userData);
       } else {
