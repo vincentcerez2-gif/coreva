@@ -22,19 +22,7 @@ import {
   ChevronRight,
   MapPin,
   Calendar,
-  Send,
-  Upload,
-  Download,
-  Filter,
-  Eye,
-  Trash2,
-  UserPlus,
-  FileText,
-  AlertCircle,
-  ChevronDown,
-  Pencil,
-  Ban,
-  XCircle
+  Send
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
@@ -777,27 +765,9 @@ const AdminDashboard = ({ user }: { user: UserData }) => {
   const [rejectingJobId, setRejectingJobId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
 
-  // Enhanced user management state
-  const [showAddUser, setShowAddUser] = useState(false);
-  const [showEditUser, setShowEditUser] = useState<any | null>(null);
-  const [showImport, setShowImport] = useState(false);
-  const [roleFilter, setRoleFilter] = useState<string>('all');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [importProgress, setImportProgress] = useState<{ total: number; done: number; errors: string[] } | null>(null);
-
-  // Add user form
-  const [newUser, setNewUser] = useState({ full_name: '', email: '', password: '', role: 'va' as string });
-  const [addUserError, setAddUserError] = useState('');
-  const [addUserLoading, setAddUserLoading] = useState(false);
-
-  // Edit user form
-  const [editForm, setEditForm] = useState({ full_name: '', role: '', status: '' });
-  const [editUserError, setEditUserError] = useState('');
-  const [editUserLoading, setEditUserLoading] = useState(false);
-
   const fetchData = useCallback(async () => {
     try {
+      // 1. Stats
       const [vaCount, empCount, jobCount, pendingCount] = await Promise.all([
         supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'va'),
         supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'employer'),
@@ -812,6 +782,7 @@ const AdminDashboard = ({ user }: { user: UserData }) => {
         pendingJobs: { count: pendingCount.count || 0 }
       });
 
+      // 2. Pending Jobs
       const { data: pJobs } = await supabase
         .from('jobs')
         .select('*')
@@ -819,19 +790,15 @@ const AdminDashboard = ({ user }: { user: UserData }) => {
         .order('created_at', { ascending: false });
       setPendingJobs(pJobs || []);
 
+      // 3. Users
       let userQuery = supabase.from('profiles').select('*');
       if (userSearch) {
-        userQuery = userQuery.or(`full_name.ilike.%${userSearch}%,email.ilike.%${userSearch}%`);
-      }
-      if (roleFilter !== 'all') {
-        userQuery = userQuery.eq('role', roleFilter);
-      }
-      if (statusFilter !== 'all') {
-        userQuery = userQuery.eq('status', statusFilter);
+        userQuery = userQuery.ilike('full_name', `%${userSearch}%`);
       }
       const { data: uList } = await userQuery.order('created_at', { ascending: false });
       setUsers(uList || []);
 
+      // 4. Subscriptions (from employer_profiles)
       const { data: subList } = await supabase
         .from('employer_profiles')
         .select(`
@@ -846,11 +813,12 @@ const AdminDashboard = ({ user }: { user: UserData }) => {
         employer_email: s.profiles?.email
       })));
 
+      // 5. Logs (Placeholder for now as we don't have a logs table yet)
       setLogs([]);
     } catch (err) {
       console.error('Error fetching admin data:', err);
     }
-  }, [userSearch, roleFilter, statusFilter]);
+  }, [userSearch]);
 
   useEffect(() => {
     fetchData();
@@ -862,6 +830,7 @@ const AdminDashboard = ({ user }: { user: UserData }) => {
         .from('jobs')
         .update({ status: 'approved' })
         .eq('id', id);
+
       if (error) throw error;
       fetchData();
     } catch (err) {
@@ -876,6 +845,7 @@ const AdminDashboard = ({ user }: { user: UserData }) => {
         .from('jobs')
         .update({ status: 'rejected' })
         .eq('id', rejectingJobId);
+
       if (error) throw error;
       setRejectingJobId(null);
       setRejectionReason('');
@@ -886,229 +856,63 @@ const AdminDashboard = ({ user }: { user: UserData }) => {
   };
 
   const updateUserStatus = async (id: string, status: string) => {
-    setActionLoading(id);
     try {
       const { error } = await supabase
         .from('profiles')
         .update({ status })
         .eq('id', id);
+
       if (error) throw error;
       fetchData();
     } catch (err) {
       console.error('Error updating user status:', err);
-    } finally {
-      setActionLoading(null);
     }
   };
 
   const deleteUser = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this user? This action cannot be undone.')) return;
-    setActionLoading(id);
+    if (!confirm('Are you sure you want to delete this user?')) return;
     try {
       const { error } = await supabase
         .from('profiles')
         .delete()
         .eq('id', id);
+
       if (error) throw error;
       fetchData();
     } catch (err) {
       console.error('Error deleting user:', err);
-    } finally {
-      setActionLoading(null);
     }
   };
-
-  const handleAddUser = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAddUserLoading(true);
-    setAddUserError('');
-    try {
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email: newUser.email,
-        password: newUser.password,
-        options: {
-          data: {
-            full_name: newUser.full_name,
-            role: newUser.role,
-          },
-        },
-      });
-      if (signUpError) throw signUpError;
-      if (data.user) {
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .upsert({
-            id: data.user.id,
-            full_name: newUser.full_name,
-            email: newUser.email,
-            role: newUser.role,
-            status: 'approved',
-          }, { onConflict: 'id' });
-        if (profileError) {
-          console.warn('Profile insert blocked by RLS, user created in auth with metadata fallback');
-        }
-      }
-      setShowAddUser(false);
-      setNewUser({ full_name: '', email: '', password: '', role: 'va' });
-      fetchData();
-    } catch (err: any) {
-      setAddUserError(err.message || 'Failed to create user');
-    } finally {
-      setAddUserLoading(false);
-    }
-  };
-
-  const handleEditUser = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!showEditUser) return;
-    setEditUserLoading(true);
-    setEditUserError('');
-    try {
-      const { error } = await supabase
-        .from('profiles')
-        .update({
-          full_name: editForm.full_name,
-          role: editForm.role,
-          status: editForm.status,
-        })
-        .eq('id', showEditUser.id);
-      if (error) throw error;
-      setShowEditUser(null);
-      fetchData();
-    } catch (err: any) {
-      setEditUserError(err.message || 'Failed to update user');
-    } finally {
-      setEditUserLoading(false);
-    }
-  };
-
-  const openEditUser = (u: any) => {
-    setEditForm({ full_name: u.full_name || u.name || '', role: u.role || 'va', status: u.status || 'pending' });
-    setEditUserError('');
-    setShowEditUser(u);
-  };
-
-  const handleCSVImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
-    const text = await file.text();
-    const lines = text.split('\n').filter(l => l.trim());
-    if (lines.length < 2) {
-      alert('CSV must have a header row and at least one data row.');
-      return;
-    }
-
-    const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-    const nameIdx = headers.findIndex(h => h === 'name' || h === 'full_name');
-    const emailIdx = headers.findIndex(h => h === 'email');
-    const passwordIdx = headers.findIndex(h => h === 'password');
-    const roleIdx = headers.findIndex(h => h === 'role');
-
-    if (nameIdx === -1 || emailIdx === -1) {
-      alert('CSV must have "name" (or "full_name") and "email" columns.');
-      return;
-    }
-
-    const rows = lines.slice(1).map(line => {
-      const cols = line.split(',').map(c => c.trim());
-      return {
-        full_name: cols[nameIdx] || '',
-        email: cols[emailIdx] || '',
-        password: passwordIdx !== -1 ? cols[passwordIdx] || 'TempPass123!' : 'TempPass123!',
-        role: roleIdx !== -1 ? cols[roleIdx] || 'va' : 'va',
-      };
-    }).filter(r => r.full_name && r.email);
-
-    setImportProgress({ total: rows.length, done: 0, errors: [] });
-
-    let done = 0;
-    const errors: string[] = [];
-
-    for (const row of rows) {
-      try {
-        const { data, error: signUpError } = await supabase.auth.signUp({
-          email: row.email,
-          password: row.password,
-          options: {
-            data: {
-              full_name: row.full_name,
-              role: row.role,
-            },
-          },
-        });
-        if (signUpError) throw signUpError;
-        if (data.user) {
-          await supabase.from('profiles').upsert({
-            id: data.user.id,
-            full_name: row.full_name,
-            email: row.email,
-            role: row.role,
-            status: 'approved',
-          }, { onConflict: 'id' });
-        }
-      } catch (err: any) {
-        errors.push(`${row.email}: ${err.message}`);
-      }
-      done++;
-      setImportProgress({ total: rows.length, done, errors: [...errors] });
-    }
-
-    setTimeout(() => {
-      fetchData();
-      if (errors.length === 0) {
-        setShowImport(false);
-        setImportProgress(null);
-      }
-    }, 1500);
-  };
-
-  const exportUsersCSV = () => {
-    const csvRows = [
-      ['Name', 'Email', 'Role', 'Status', 'Joined'].join(','),
-      ...users.map(u => [
-        `"${(u.full_name || u.name || '').replace(/"/g, '""')}"`,
-        u.email,
-        u.role,
-        u.status,
-        u.created_at ? new Date(u.created_at).toLocaleDateString() : ''
-      ].join(','))
-    ];
-    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'users-export.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const filteredUsers = users;
-  const approvedCount = users.filter(u => u.status === 'approved').length;
-  const pendingCount = users.filter(u => u.status === 'pending').length;
-  const suspendedCount = users.filter(u => u.status === 'suspended').length;
-  const rejectedCount = users.filter(u => u.status === 'rejected').length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-zinc-900">Admin Control Center</h1>
-          <p className="text-sm text-zinc-500 mt-1">{'Manage users, jobs, subscriptions, and platform activity'}</p>
-        </div>
+        <h1 className="text-3xl font-bold text-zinc-900">Admin Control Center</h1>
         <div className="flex bg-white p-1 rounded-xl border border-zinc-200">
-          {(['overview', 'users', 'subscriptions', 'logs'] as const).map(tab => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={cn(
-                "px-4 py-2 rounded-lg text-sm font-bold transition-all capitalize",
-                activeTab === tab ? "bg-teal-600 text-white" : "text-zinc-500 hover:text-zinc-900"
-              )}
-            >
-              {tab}
-            </button>
-          ))}
+          <button 
+            onClick={() => setActiveTab('overview')}
+            className={cn("px-4 py-2 rounded-lg text-sm font-bold transition-all", activeTab === 'overview' ? "bg-teal-600 text-white" : "text-zinc-500 hover:text-zinc-900")}
+          >
+            Overview
+          </button>
+          <button 
+            onClick={() => setActiveTab('users')}
+            className={cn("px-4 py-2 rounded-lg text-sm font-bold transition-all", activeTab === 'users' ? "bg-teal-600 text-white" : "text-zinc-500 hover:text-zinc-900")}
+          >
+            Users
+          </button>
+          <button 
+            onClick={() => setActiveTab('subscriptions')}
+            className={cn("px-4 py-2 rounded-lg text-sm font-bold transition-all", activeTab === 'subscriptions' ? "bg-teal-600 text-white" : "text-zinc-500 hover:text-zinc-900")}
+          >
+            Subscriptions
+          </button>
+          <button 
+            onClick={() => setActiveTab('logs')}
+            className={cn("px-4 py-2 rounded-lg text-sm font-bold transition-all", activeTab === 'logs' ? "bg-teal-600 text-white" : "text-zinc-500 hover:text-zinc-900")}
+          >
+            Logs
+          </button>
         </div>
       </div>
       
@@ -1116,20 +920,20 @@ const AdminDashboard = ({ user }: { user: UserData }) => {
         <>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-12">
             {[
-              { label: 'Total VAs', value: stats?.totalVAs?.count || 0, icon: Users, color: 'text-blue-600', bg: 'bg-blue-50' },
-              { label: 'Total Employers', value: stats?.totalEmployers?.count || 0, icon: Briefcase, color: 'text-teal-600', bg: 'bg-teal-50' },
-              { label: 'Total Jobs', value: stats?.totalJobs?.count || 0, icon: BarChart3, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-              { label: 'Pending Approvals', value: stats?.pendingJobs?.count || 0, icon: Clock, color: 'text-amber-600', bg: 'bg-amber-50' },
+              { label: 'Total VAs', value: stats?.totalVAs?.count || 0, icon: Users, color: 'text-blue-600' },
+              { label: 'Total Employers', value: stats?.totalEmployers?.count || 0, icon: Briefcase, color: 'text-teal-600' },
+              { label: 'Total Jobs', value: stats?.totalJobs?.count || 0, icon: BarChart3, color: 'text-emerald-600' },
+              { label: 'Pending Approvals', value: stats?.pendingJobs?.count || 0, icon: Clock, color: 'text-amber-600' },
             ].map((stat, i) => (
-              <motion.div key={i} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }} className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
+              <div key={i} className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
                 <div className="flex items-center justify-between mb-4">
-                  <div className={cn("p-2.5 rounded-xl", stat.bg, stat.color)}>
-                    <stat.icon className="w-5 h-5" />
+                  <div className={cn("p-2 rounded-lg bg-zinc-50", stat.color)}>
+                    <stat.icon className="w-6 h-6" />
                   </div>
                 </div>
                 <div className="text-2xl font-bold text-zinc-900">{stat.value}</div>
                 <div className="text-sm font-medium text-zinc-500">{stat.label}</div>
-              </motion.div>
+              </div>
             ))}
           </div>
 
@@ -1150,8 +954,8 @@ const AdminDashboard = ({ user }: { user: UserData }) => {
                       </div>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
                         <span className="flex items-center gap-1"><Briefcase className="w-3 h-3" /> {job.company_name}</span>
-                        <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {'Posted '}{new Date(job.created_at).toLocaleDateString()}</span>
-                        <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" /> {'$'}{job.salary_min}{' - $'}{job.salary_max}</span>
+                        <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> Posted {new Date(job.created_at).toLocaleDateString()}</span>
+                        <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" /> ${job.salary_min} - ${job.salary_max}</span>
                       </div>
                       <p className="mt-2 text-sm text-zinc-600 line-clamp-1">{job.description}</p>
                     </div>
@@ -1178,213 +982,71 @@ const AdminDashboard = ({ user }: { user: UserData }) => {
       )}
 
       {activeTab === 'users' && (
-        <div>
-          {/* User stats bar */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            {[
-              { label: 'Approved', count: approvedCount, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-              { label: 'Pending', count: pendingCount, color: 'text-amber-600', bg: 'bg-amber-50' },
-              { label: 'Suspended', count: suspendedCount, color: 'text-red-600', bg: 'bg-red-50' },
-              { label: 'Rejected', count: rejectedCount, color: 'text-zinc-600', bg: 'bg-zinc-100' },
-            ].map((s, i) => (
-              <div key={i} className={cn("flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-200 bg-white")}>
-                <div className={cn("w-2.5 h-2.5 rounded-full", s.bg.replace('bg-', 'bg-').replace('50', '500').replace('100', '500'))} style={{
-                  backgroundColor: s.label === 'Approved' ? '#059669' : s.label === 'Pending' ? '#d97706' : s.label === 'Suspended' ? '#dc2626' : '#71717a'
-                }} />
-                <span className="text-sm font-medium text-zinc-700">{s.label}</span>
-                <span className={cn("ml-auto text-lg font-bold", s.color)}>{s.count}</span>
-              </div>
-            ))}
+        <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-zinc-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <h2 className="text-xl font-bold text-zinc-900">User Management</h2>
+            <div className="relative w-full md:w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+              <input 
+                type="text" 
+                value={userSearch}
+                onChange={(e) => setUserSearch(e.target.value)}
+                placeholder="Search users..."
+                className="w-full pl-10 pr-4 py-2 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500"
+              />
+            </div>
           </div>
-
-          <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
-            <div className="p-6 border-b border-zinc-100">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <h2 className="text-xl font-bold text-zinc-900">User Management</h2>
-                <div className="flex flex-wrap items-center gap-3">
-                  {/* Search */}
-                  <div className="relative w-full sm:w-56">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-                    <input 
-                      type="text" 
-                      value={userSearch}
-                      onChange={(e) => setUserSearch(e.target.value)}
-                      placeholder="Search users..."
-                      className="w-full pl-10 pr-4 py-2 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500"
-                    />
-                  </div>
-
-                  {/* Role filter */}
-                  <div className="relative">
-                    <select
-                      value={roleFilter}
-                      onChange={(e) => setRoleFilter(e.target.value)}
-                      className="appearance-none pl-3 pr-8 py-2 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white cursor-pointer"
-                    >
-                      <option value="all">All Roles</option>
-                      <option value="va">VA</option>
-                      <option value="employer">Employer</option>
-                      <option value="admin">Admin</option>
-                    </select>
-                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400 pointer-events-none" />
-                  </div>
-
-                  {/* Status filter */}
-                  <div className="relative">
-                    <select
-                      value={statusFilter}
-                      onChange={(e) => setStatusFilter(e.target.value)}
-                      className="appearance-none pl-3 pr-8 py-2 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white cursor-pointer"
-                    >
-                      <option value="all">All Status</option>
-                      <option value="approved">Approved</option>
-                      <option value="pending">Pending</option>
-                      <option value="suspended">Suspended</option>
-                      <option value="rejected">Rejected</option>
-                    </select>
-                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400 pointer-events-none" />
-                  </div>
-                </div>
-              </div>
-
-              {/* Action buttons row */}
-              <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t border-zinc-100">
-                <button
-                  onClick={() => { setShowAddUser(true); setAddUserError(''); setNewUser({ full_name: '', email: '', password: '', role: 'va' }); }}
-                  className="flex items-center gap-2 bg-teal-600 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-teal-700 transition-all"
-                >
-                  <UserPlus className="w-4 h-4" />
-                  Add User
-                </button>
-                <button
-                  onClick={() => { setShowImport(true); setImportProgress(null); }}
-                  className="flex items-center gap-2 bg-white text-zinc-700 border border-zinc-200 px-4 py-2 rounded-xl text-sm font-bold hover:bg-zinc-50 transition-all"
-                >
-                  <Upload className="w-4 h-4" />
-                  Import CSV
-                </button>
-                <button
-                  onClick={exportUsersCSV}
-                  className="flex items-center gap-2 bg-white text-zinc-700 border border-zinc-200 px-4 py-2 rounded-xl text-sm font-bold hover:bg-zinc-50 transition-all"
-                >
-                  <Download className="w-4 h-4" />
-                  Export CSV
-                </button>
-                <span className="ml-auto text-sm text-zinc-400">{filteredUsers.length}{' user(s) found'}</span>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-zinc-50 text-xs font-bold text-zinc-500 uppercase tracking-wider">
-                    <th className="px-6 py-4">User</th>
-                    <th className="px-6 py-4">Role</th>
-                    <th className="px-6 py-4">Status</th>
-                    <th className="px-6 py-4">Joined</th>
-                    <th className="px-6 py-4 text-right">Actions</th>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-zinc-50 text-xs font-bold text-zinc-500 uppercase tracking-wider">
+                  <th className="px-6 py-4">Name</th>
+                  <th className="px-6 py-4">Role</th>
+                  <th className="px-6 py-4">Status</th>
+                  <th className="px-6 py-4">Joined</th>
+                  <th className="px-6 py-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {users.map((u) => (
+                  <tr key={u.id} className="hover:bg-zinc-50 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="font-bold text-zinc-900">{u.name}</div>
+                      <div className="text-xs text-zinc-500">{u.email}</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={cn(
+                        "text-[10px] font-bold uppercase px-2 py-1 rounded",
+                        u.role === 'va' ? "bg-blue-50 text-blue-600" : "bg-teal-50 text-teal-600"
+                      )}>
+                        {u.role}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={cn(
+                        "text-[10px] font-bold uppercase px-2 py-1 rounded",
+                        u.status === 'approved' ? "bg-emerald-50 text-emerald-600" : 
+                        u.status === 'pending' ? "bg-amber-50 text-amber-600" : "bg-red-50 text-red-600"
+                      )}>
+                        {u.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-zinc-500">
+                      {new Date(u.created_at).toLocaleDateString()}
+                    </td>
+                    <td className="px-6 py-4 text-right space-x-2">
+                      {u.status !== 'approved' && (
+                        <button onClick={() => updateUserStatus(u.id, 'approved')} className="text-xs font-bold text-emerald-600 hover:underline">Approve</button>
+                      )}
+                      {u.status !== 'suspended' && (
+                        <button onClick={() => updateUserStatus(u.id, 'suspended')} className="text-xs font-bold text-amber-600 hover:underline">Suspend</button>
+                      )}
+                      <button onClick={() => deleteUser(u.id)} className="text-xs font-bold text-red-600 hover:underline">Delete</button>
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100">
-                  {filteredUsers.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="px-6 py-12 text-center text-zinc-400">No users match your filters.</td>
-                    </tr>
-                  ) : (
-                    filteredUsers.map((u) => (
-                      <tr key={u.id} className="hover:bg-zinc-50 transition-colors">
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-full bg-zinc-100 flex items-center justify-center text-zinc-500 font-bold text-sm">
-                              {(u.full_name || u.name || 'U').charAt(0).toUpperCase()}
-                            </div>
-                            <div>
-                              <div className="font-bold text-zinc-900">{u.full_name || u.name}</div>
-                              <div className="text-xs text-zinc-500">{u.email}</div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={cn(
-                            "text-[10px] font-bold uppercase px-2.5 py-1 rounded-lg",
-                            u.role === 'va' ? "bg-blue-50 text-blue-600" : 
-                            u.role === 'admin' ? "bg-purple-50 text-purple-600" : "bg-teal-50 text-teal-600"
-                          )}>
-                            {u.role}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={cn(
-                            "text-[10px] font-bold uppercase px-2.5 py-1 rounded-lg",
-                            u.status === 'approved' ? "bg-emerald-50 text-emerald-600" : 
-                            u.status === 'pending' ? "bg-amber-50 text-amber-600" : 
-                            u.status === 'rejected' ? "bg-zinc-100 text-zinc-600" : "bg-red-50 text-red-600"
-                          )}>
-                            {u.status || 'pending'}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-zinc-500">
-                          {u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A'}
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center justify-end gap-1">
-                            {actionLoading === u.id ? (
-                              <span className="text-xs text-zinc-400">Processing...</span>
-                            ) : (
-                              <>
-                                <button
-                                  onClick={() => openEditUser(u)}
-                                  title="Edit user"
-                                  className="p-2 rounded-lg text-zinc-400 hover:text-teal-600 hover:bg-teal-50 transition-all"
-                                >
-                                  <Pencil className="w-4 h-4" />
-                                </button>
-                                {u.status !== 'approved' && (
-                                  <button
-                                    onClick={() => updateUserStatus(u.id, 'approved')}
-                                    title="Approve user"
-                                    className="p-2 rounded-lg text-zinc-400 hover:text-emerald-600 hover:bg-emerald-50 transition-all"
-                                  >
-                                    <CheckCircle className="w-4 h-4" />
-                                  </button>
-                                )}
-                                {u.status !== 'rejected' && u.role !== 'admin' && (
-                                  <button
-                                    onClick={() => updateUserStatus(u.id, 'rejected')}
-                                    title="Reject user"
-                                    className="p-2 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-all"
-                                  >
-                                    <XCircle className="w-4 h-4" />
-                                  </button>
-                                )}
-                                {u.status !== 'suspended' && u.role !== 'admin' && (
-                                  <button
-                                    onClick={() => updateUserStatus(u.id, 'suspended')}
-                                    title="Suspend user"
-                                    className="p-2 rounded-lg text-zinc-400 hover:text-amber-600 hover:bg-amber-50 transition-all"
-                                  >
-                                    <Ban className="w-4 h-4" />
-                                  </button>
-                                )}
-                                {u.role !== 'admin' && (
-                                  <button
-                                    onClick={() => deleteUser(u.id)}
-                                    title="Delete user"
-                                    className="p-2 rounded-lg text-zinc-400 hover:text-red-600 hover:bg-red-50 transition-all"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -1405,10 +1067,8 @@ const AdminDashboard = ({ user }: { user: UserData }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {subscriptions.length === 0 ? (
-                  <tr><td colSpan={4} className="px-6 py-12 text-center text-zinc-400">No subscriptions found.</td></tr>
-                ) : subscriptions.map((sub) => (
-                  <tr key={sub.id} className="text-sm hover:bg-zinc-50 transition-colors">
+                {subscriptions.map((sub) => (
+                  <tr key={sub.id} className="text-sm">
                     <td className="px-6 py-4">
                       <div className="font-bold text-zinc-900">{sub.employer_name}</div>
                       <div className="text-xs text-zinc-500">{sub.employer_email}</div>
@@ -1450,9 +1110,7 @@ const AdminDashboard = ({ user }: { user: UserData }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {logs.length === 0 ? (
-                  <tr><td colSpan={4} className="px-6 py-12 text-center text-zinc-400">No activity logs yet.</td></tr>
-                ) : logs.map((log) => (
+                {logs.map((log) => (
                   <tr key={log.id} className="text-sm">
                     <td className="px-6 py-4 font-medium text-zinc-900">{log.admin_name}</td>
                     <td className="px-6 py-4">
@@ -1470,9 +1128,8 @@ const AdminDashboard = ({ user }: { user: UserData }) => {
         </div>
       )}
 
-      {/* Modals */}
+      {/* Rejection Modal */}
       <AnimatePresence>
-        {/* Rejection Modal */}
         {rejectingJobId && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setRejectingJobId(null)} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
@@ -1485,256 +1142,9 @@ const AdminDashboard = ({ user }: { user: UserData }) => {
                 className="w-full h-32 p-3 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-red-500 mb-4"
               />
               <div className="flex gap-3">
-                <button onClick={rejectJob} className="flex-1 bg-red-600 text-white py-2.5 rounded-lg font-bold hover:bg-red-700 transition-all">Confirm Reject</button>
-                <button onClick={() => setRejectingJobId(null)} className="flex-1 bg-zinc-100 text-zinc-600 py-2.5 rounded-lg font-bold hover:bg-zinc-200 transition-all">Cancel</button>
+                <button onClick={rejectJob} className="flex-1 bg-red-600 text-white py-2 rounded-lg font-bold hover:bg-red-700">Confirm Reject</button>
+                <button onClick={() => setRejectingJobId(null)} className="flex-1 bg-zinc-100 text-zinc-600 py-2 rounded-lg font-bold hover:bg-zinc-200">Cancel</button>
               </div>
-            </motion.div>
-          </div>
-        )}
-
-        {/* Add User Modal */}
-        {showAddUser && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowAddUser(false)} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white w-full max-w-md rounded-2xl shadow-2xl relative z-10 p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-lg font-bold text-zinc-900">Add New User</h3>
-                <button onClick={() => setShowAddUser(false)} className="p-1 rounded-lg hover:bg-zinc-100 transition-all">
-                  <X className="w-5 h-5 text-zinc-400" />
-                </button>
-              </div>
-              {addUserError && (
-                <div className="flex items-center gap-2 bg-red-50 text-red-600 p-3 rounded-lg text-sm mb-4">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  {addUserError}
-                </div>
-              )}
-              <form onSubmit={handleAddUser} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1">Full Name</label>
-                  <input
-                    type="text"
-                    required
-                    value={newUser.full_name}
-                    onChange={(e) => setNewUser(p => ({ ...p, full_name: e.target.value }))}
-                    className="w-full px-4 py-2.5 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500"
-                    placeholder="John Doe"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1">Email</label>
-                  <input
-                    type="email"
-                    required
-                    value={newUser.email}
-                    onChange={(e) => setNewUser(p => ({ ...p, email: e.target.value }))}
-                    className="w-full px-4 py-2.5 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500"
-                    placeholder="user@example.com"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1">Password</label>
-                  <input
-                    type="password"
-                    required
-                    minLength={6}
-                    value={newUser.password}
-                    onChange={(e) => setNewUser(p => ({ ...p, password: e.target.value }))}
-                    className="w-full px-4 py-2.5 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500"
-                    placeholder="Min 6 characters"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1">Role</label>
-                  <select
-                    value={newUser.role}
-                    onChange={(e) => setNewUser(p => ({ ...p, role: e.target.value }))}
-                    className="w-full px-4 py-2.5 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white"
-                  >
-                    <option value="va">Virtual Assistant</option>
-                    <option value="employer">Employer</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
-                <div className="flex gap-3 pt-2">
-                  <button
-                    type="submit"
-                    disabled={addUserLoading}
-                    className="flex-1 bg-teal-600 text-white py-2.5 rounded-xl font-bold hover:bg-teal-700 transition-all disabled:opacity-50"
-                  >
-                    {addUserLoading ? 'Creating...' : 'Create User'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowAddUser(false)}
-                    className="flex-1 bg-zinc-100 text-zinc-600 py-2.5 rounded-xl font-bold hover:bg-zinc-200 transition-all"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-
-        {/* Edit User Modal */}
-        {showEditUser && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowEditUser(null)} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white w-full max-w-md rounded-2xl shadow-2xl relative z-10 p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-lg font-bold text-zinc-900">Edit User</h3>
-                <button onClick={() => setShowEditUser(null)} className="p-1 rounded-lg hover:bg-zinc-100 transition-all">
-                  <X className="w-5 h-5 text-zinc-400" />
-                </button>
-              </div>
-              <div className="bg-zinc-50 rounded-xl p-3 mb-4">
-                <div className="text-sm font-medium text-zinc-700">{showEditUser.email}</div>
-                <div className="text-xs text-zinc-400">{'User ID: '}{showEditUser.id?.slice(0, 8)}{'...'}</div>
-              </div>
-              {editUserError && (
-                <div className="flex items-center gap-2 bg-red-50 text-red-600 p-3 rounded-lg text-sm mb-4">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  {editUserError}
-                </div>
-              )}
-              <form onSubmit={handleEditUser} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1">Full Name</label>
-                  <input
-                    type="text"
-                    required
-                    value={editForm.full_name}
-                    onChange={(e) => setEditForm(p => ({ ...p, full_name: e.target.value }))}
-                    className="w-full px-4 py-2.5 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1">Role</label>
-                  <select
-                    value={editForm.role}
-                    onChange={(e) => setEditForm(p => ({ ...p, role: e.target.value }))}
-                    className="w-full px-4 py-2.5 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white"
-                  >
-                    <option value="va">Virtual Assistant</option>
-                    <option value="employer">Employer</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1">Status</label>
-                  <select
-                    value={editForm.status}
-                    onChange={(e) => setEditForm(p => ({ ...p, status: e.target.value }))}
-                    className="w-full px-4 py-2.5 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white"
-                  >
-                    <option value="approved">Approved</option>
-                    <option value="pending">Pending</option>
-                    <option value="suspended">Suspended</option>
-                    <option value="rejected">Rejected</option>
-                  </select>
-                </div>
-                <div className="flex gap-3 pt-2">
-                  <button
-                    type="submit"
-                    disabled={editUserLoading}
-                    className="flex-1 bg-teal-600 text-white py-2.5 rounded-xl font-bold hover:bg-teal-700 transition-all disabled:opacity-50"
-                  >
-                    {editUserLoading ? 'Saving...' : 'Save Changes'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowEditUser(null)}
-                    className="flex-1 bg-zinc-100 text-zinc-600 py-2.5 rounded-xl font-bold hover:bg-zinc-200 transition-all"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-
-        {/* Import CSV Modal */}
-        {showImport && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => !importProgress && setShowImport(false)} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white w-full max-w-lg rounded-2xl shadow-2xl relative z-10 p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-lg font-bold text-zinc-900">Import Users from CSV</h3>
-                <button onClick={() => !importProgress && setShowImport(false)} className="p-1 rounded-lg hover:bg-zinc-100 transition-all">
-                  <X className="w-5 h-5 text-zinc-400" />
-                </button>
-              </div>
-
-              {!importProgress ? (
-                <>
-                  <div className="bg-zinc-50 rounded-xl p-4 mb-4">
-                    <h4 className="text-sm font-bold text-zinc-700 mb-2">CSV Format Requirements</h4>
-                    <p className="text-xs text-zinc-500 mb-2">{'Your CSV file should have the following columns:'}</p>
-                    <code className="text-xs bg-white border border-zinc-200 rounded-lg p-2 block text-zinc-700">
-                      name,email,password,role
-                    </code>
-                    <p className="text-xs text-zinc-400 mt-2">{'If password is omitted, default "TempPass123!" will be used. Role defaults to "va".'}</p>
-                  </div>
-                  <label className="flex flex-col items-center justify-center border-2 border-dashed border-zinc-200 rounded-xl p-8 cursor-pointer hover:border-teal-400 hover:bg-teal-50/30 transition-all">
-                    <Upload className="w-8 h-8 text-zinc-300 mb-3" />
-                    <span className="text-sm font-medium text-zinc-600">Click to select a CSV file</span>
-                    <span className="text-xs text-zinc-400 mt-1">or drag and drop</span>
-                    <input type="file" accept=".csv" onChange={handleCSVImport} className="hidden" />
-                  </label>
-                </>
-              ) : (
-                <div>
-                  <div className="mb-4">
-                    <div className="flex items-center justify-between text-sm mb-2">
-                      <span className="text-zinc-600 font-medium">{'Importing users...'}</span>
-                      <span className="text-zinc-500">{importProgress.done}{' / '}{importProgress.total}</span>
-                    </div>
-                    <div className="w-full bg-zinc-100 rounded-full h-2.5">
-                      <div
-                        className="bg-teal-600 h-2.5 rounded-full transition-all duration-300"
-                        style={{ width: `${(importProgress.done / importProgress.total) * 100}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  {importProgress.done === importProgress.total && (
-                    <div className={cn(
-                      "p-4 rounded-xl text-sm",
-                      importProgress.errors.length === 0 ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
-                    )}>
-                      {importProgress.errors.length === 0 ? (
-                        <div className="flex items-center gap-2">
-                          <CheckCircle className="w-4 h-4" />
-                          {'All '}{importProgress.total}{' users imported successfully!'}
-                        </div>
-                      ) : (
-                        <div>
-                          <div className="flex items-center gap-2 mb-2">
-                            <AlertCircle className="w-4 h-4" />
-                            {importProgress.total - importProgress.errors.length}{' of '}{importProgress.total}{' imported. '}{importProgress.errors.length}{' error(s):'}
-                          </div>
-                          <ul className="text-xs space-y-1 ml-6 max-h-32 overflow-y-auto">
-                            {importProgress.errors.map((err, i) => (
-                              <li key={i}>{err}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {importProgress.done === importProgress.total && (
-                    <button
-                      onClick={() => { setShowImport(false); setImportProgress(null); }}
-                      className="w-full mt-4 bg-zinc-100 text-zinc-600 py-2.5 rounded-xl font-bold hover:bg-zinc-200 transition-all"
-                    >
-                      Close
-                    </button>
-                  )}
-                </div>
-              )}
             </motion.div>
           </div>
         )}

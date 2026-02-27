@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 
 async function startServer() {
   const app = express();
-  const PORT = parseInt(process.env.PORT || "3000", 10);
+  const PORT = 3000;
 
   app.use(express.json());
 
@@ -182,81 +182,6 @@ async function startServer() {
       .run(uuidv4(), admin_id, 'user_deleted', id, `Deleted user: ${id}`);
       
     res.json({ success: true });
-  });
-
-  // Admin: Add user
-  app.post("/api/admin/add-user", (req, res) => {
-    const { name, email, password, role, admin_id } = req.body;
-    const id = uuidv4();
-    try {
-      db.prepare("INSERT INTO users (id, name, email, password, role, status) VALUES (?, ?, ?, ?, ?, ?)").run(id, name, email, password, role, 'approved');
-      
-      if (role === 'va') {
-        db.prepare("INSERT INTO va_profiles (id, user_id) VALUES (?, ?)").run(uuidv4(), id);
-      } else if (role === 'employer') {
-        db.prepare("INSERT INTO employer_profiles (id, user_id) VALUES (?, ?)").run(uuidv4(), id);
-      }
-
-      if (admin_id) {
-        db.prepare("INSERT INTO admin_logs (id, admin_id, action_type, target_user_id, description) VALUES (?, ?, ?, ?, ?)")
-          .run(uuidv4(), admin_id, 'user_added', id, `Added user: ${name} (${email}) as ${role}`);
-      }
-
-      const user = db.prepare("SELECT id, name, email, role, status, created_at FROM users WHERE id = ?").get(id);
-      res.json({ user });
-    } catch (e: any) {
-      res.status(400).json({ error: e.message.includes("UNIQUE") ? "Email already exists" : "Failed to add user" });
-    }
-  });
-
-  // Admin: Edit user
-  app.put("/api/admin/edit-user", (req, res) => {
-    const { id, name, role, status, admin_id } = req.body;
-    try {
-      db.prepare("UPDATE users SET name = ?, role = ?, status = ? WHERE id = ?").run(name, role, status, id);
-      
-      if (admin_id) {
-        db.prepare("INSERT INTO admin_logs (id, admin_id, action_type, target_user_id, description) VALUES (?, ?, ?, ?, ?)")
-          .run(uuidv4(), admin_id, 'user_edited', id, `Edited user ${id}: name=${name}, role=${role}, status=${status}`);
-      }
-
-      const user = db.prepare("SELECT id, name, email, role, status, created_at FROM users WHERE id = ?").get(id);
-      res.json({ user });
-    } catch (e: any) {
-      res.status(400).json({ error: "Failed to update user" });
-    }
-  });
-
-  // Admin: Bulk import users
-  app.post("/api/admin/import-users", (req, res) => {
-    const { users: importUsers, admin_id } = req.body;
-    const results: { success: number; errors: string[] } = { success: 0, errors: [] };
-
-    for (const u of importUsers) {
-      try {
-        const id = uuidv4();
-        db.prepare("INSERT INTO users (id, name, email, password, role, status) VALUES (?, ?, ?, ?, ?, ?)").run(
-          id, u.name, u.email, u.password || 'TempPass123!', u.role || 'va', 'approved'
-        );
-        
-        if (u.role === 'va' || !u.role) {
-          db.prepare("INSERT INTO va_profiles (id, user_id) VALUES (?, ?)").run(uuidv4(), id);
-        } else if (u.role === 'employer') {
-          db.prepare("INSERT INTO employer_profiles (id, user_id) VALUES (?, ?)").run(uuidv4(), id);
-        }
-
-        results.success++;
-      } catch (e: any) {
-        results.errors.push(`${u.email}: ${e.message.includes("UNIQUE") ? "Email already exists" : e.message}`);
-      }
-    }
-
-    if (admin_id) {
-      db.prepare("INSERT INTO admin_logs (id, admin_id, action_type, description) VALUES (?, ?, ?, ?)")
-        .run(uuidv4(), admin_id, 'users_imported', `Imported ${results.success} users (${results.errors.length} errors)`);
-    }
-
-    res.json(results);
   });
 
   app.get("/api/admin/logs", (req, res) => {

@@ -12,7 +12,7 @@ db.exec(`
     name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
-    status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'suspended', 'rejected')),
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'suspended')),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -161,16 +161,6 @@ if (adminCount.count === 0) {
   );
 } else {
   db.prepare('UPDATE users SET password = ? WHERE email = ?').run('Memyselfandi!1', 'admin@vahub.com');
-}
-
-// Seed adminjosh account
-const adminJoshCount = db.prepare('SELECT count(*) as count FROM users WHERE email = ?').get('igotmeforlife04@gmail.com') as { count: number };
-if (adminJoshCount.count === 0) {
-  db.prepare('INSERT INTO users (id, role, name, email, password, status) VALUES (?, ?, ?, ?, ?, ?)').run(
-    'admin-josh', 'admin', 'adminjosh', 'igotmeforlife04@gmail.com', 'SupAdmin/1', 'approved'
-  );
-} else {
-  db.prepare('UPDATE users SET password = ?, role = ?, status = ? WHERE email = ?').run('SupAdmin/1', 'admin', 'approved', 'igotmeforlife04@gmail.com');
 }
 
 // Seed demo accounts
